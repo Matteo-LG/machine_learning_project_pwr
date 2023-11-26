@@ -1,7 +1,8 @@
+import networkx as nx
 import numpy as np
+
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics import euclidean_distances
-
 from sklearn.datasets import make_classification
 
 class CopKMeans(BaseEstimator, ClassifierMixin):
@@ -9,30 +10,61 @@ class CopKMeans(BaseEstimator, ClassifierMixin):
         self.n_clusters = n_clusters
         self.max_iter = max_iter
 
-    def violate_constraints(self, data_point, cluster_i, assigned_centroids,
+    def violate_constraints(self, idx_data_point, c, cluster_i, assigned_centroids,
                             must_link, cannot_link):
-        for pt1, pt2 in must_link:
-            if not pt1 == data_point and not pt2 == data_point:
-                continue
-            if pt2 == data_point:
-                pt1, pt2 = pt2, pt1
-            if assigned_centroids[pt2] == -1 :
+        for neighbour in list(self.G.adj[idx_data_point]):
+            if assigned_centroids[neighbour] == -1 :
                 # we only enforce ML constraints if the other point has been assigned
                 continue
-            if pt2 not in cluster_i:
+            if assigned_centroids[neighbour] != c:
+                # print(idx_data_point, neighbour, "ml")
                 return True
 
-        for pt1, pt2 in cannot_link:
-            if not pt1 == data_point and not pt2 == data_point:
-                continue
-            if pt2 == data_point:
-                pt1, pt2 = pt2, pt1
-            if pt2 in cluster_i:
+        for pt in cannot_link[idx_data_point]:
+            if assigned_centroids[pt] == c :
+                # print(idx_data_point, pt, "cl")
                 return True
 
         return False
+    
+    def transitive_closure(self, n, must_link, cannot_link):
+        # Closure of must_link
+        G = nx.Graph()
+        G.add_nodes_from(list(range(n)))
+        G.add_edges_from(must_link)
+        G = nx.transitive_closure(G)
+        
+        # Closure of cannot_link
+        cl = [set() for _ in range(n)]
+        for i, tpl in enumerate(cannot_link):
+            pt1, pt2 = tpl
+            cl[pt1].add(pt2)
+            cl[pt2].add(pt1)
+            
+            # pt1 neighbours cannot link with pt2
+            for pt1_n in list(G.adj[pt1]):
+                cl[pt2].add(pt1_n)
+                cl[pt1_n].add(pt2)
+            
+            # pt2 neighbours cannot link with pt1
+            for pt2_n in list(G.adj[pt2]):
+                cl[pt1].add(pt2_n)
+                cl[pt2_n].add(pt1)
+                
+            # pt1 neighbours cannot link with pt2 neighbours
+            for pt1_n in list(G.adj[pt1]):
+                for pt2_n in list(G.adj[pt2]):
+                    cl[pt2_n].add(pt1_n)
+                    cl[pt1_n].add(pt2_n)
+        
+        
+        self.G = G
+        return cl
 
-    def fit(self, X, must_link, cannot_link):     
+    def fit(self, X, must_link, cannot_link):
+        # Transitive closure over the constraints
+        cannot_link = self.transitive_closure(X.shape[0], must_link, cannot_link)
+           
         # Initialization
         centroids_idx = np.random.choice(list(range(X.shape[0])),
                                          self.n_clusters, replace=False)
@@ -57,11 +89,13 @@ class CopKMeans(BaseEstimator, ClassifierMixin):
                 # Check the constraints
                 # assigned_centroid = -1
                 for c in closest_centroids:
-                    if not self.violate_constraints(data_point, clusters[c], assigned_centroids, must_link, cannot_link):
+                    if not self.violate_constraints(j, c, clusters[c], assigned_centroids, must_link, cannot_link):
                         assigned_centroids[j] = c
                         break
                 if assigned_centroids[j] == -1:
                     # Algorithm failed
+                    print(j, data_point)
+                    print("FAIL")
                     return None
 
                 # Assign to the first cluster that doesn't fail the constraints
@@ -85,6 +119,30 @@ class CopKMeans(BaseEstimator, ClassifierMixin):
         return closest_clusters
 
 if __name__ == '__main__':
+    # FOR TESTING PURPOSES, TO BE DELETED
+    ml = []
+    cl = []
     X, y = make_classification(n_samples=100, n_features=2, n_informative=2, n_redundant=0, n_classes=3, n_clusters_per_class=1, random_state=2111)
-    model = CopKMeans(3)
-    model.fit(X, [], [])
+
+    for i, pt1 in enumerate(y):
+        for j, pt2 in enumerate(y[i+1:]):
+            if pt1 == pt2 :
+                ml.append((i, j+i+1))
+            else:
+                cl.append((i, j+i+1))
+
+    print(ml)
+    print(cl)
+    print(len(ml), len(cl))
+
+    ml, cl = np.array(ml), np.array(cl)
+    ml_subset = ml[np.random.choice(len(ml), int(0.1*len(ml)))]
+    cl_subset = cl[np.random.choice(len(cl), int(0.1*len(cl)))]
+
+    # ml_subset = ml[np.random.choice(len(ml), 10)]
+    # cl_subset = cl[np.random.choice(len(cl), 10)]
+    model = CopKMeans(3, 200)
+
+    model.fit(X, ml_subset, cl_subset)
+    
+    print(1)
