@@ -1,3 +1,4 @@
+import copy
 import networkx as nx
 import numpy as np
 
@@ -6,12 +7,11 @@ from sklearn.metrics import euclidean_distances
 from sklearn.datasets import make_classification
 
 class CopKMeans(BaseEstimator, ClassifierMixin):
-    def __init__(self, n_clusters, max_iter=1000):
+    def __init__(self, n_clusters, max_iter=100):
         self.n_clusters = n_clusters
         self.max_iter = max_iter
 
-    def violate_constraints(self, idx_data_point, c, cluster_i, assigned_centroids,
-                            must_link, cannot_link):
+    def violate_constraints(self, idx_data_point, c, assigned_centroids, cannot_link):
         for neighbour in list(self.G.adj[idx_data_point]):
             if assigned_centroids[neighbour] == -1 :
                 # we only enforce ML constraints if the other point has been assigned
@@ -70,12 +70,8 @@ class CopKMeans(BaseEstimator, ClassifierMixin):
                                          self.n_clusters, replace=False)
         centroids = X[centroids_idx]
         clusters = [[] for _ in range(self.n_clusters)]
-        # TODO : CHECK WHEN TO STOP ? WHEN IS THERE CONVERGENCE
-        for i in range(self.max_iter):
-            # FOR TESTING PURPOSE, TO BE DELETED
-            if i%50 == 0: 
-                print(f"Itération {i}")
-            
+
+        for i in range(self.max_iter):            
             assigned_centroids = [-1]*len(X)
             for j, data_point in enumerate(X):
                 # Calculate the closest clusters
@@ -89,20 +85,28 @@ class CopKMeans(BaseEstimator, ClassifierMixin):
                 # Check the constraints
                 # assigned_centroid = -1
                 for c in closest_centroids:
-                    if not self.violate_constraints(j, c, clusters[c], assigned_centroids, must_link, cannot_link):
+                    if not self.violate_constraints(j, c, assigned_centroids, cannot_link):
                         assigned_centroids[j] = c
                         break
                 if assigned_centroids[j] == -1:
                     # Algorithm failed
-                    print(j, data_point)
-                    print("FAIL")
+                    # print(j, data_point)
+                    # print("FAIL")
                     return None
 
                 # Assign to the first cluster that doesn't fail the constraints
                 clusters[assigned_centroids[j]].append(data_point)
 
             # Update centroids
+            prev_centroids = copy.deepcopy(centroids)
             centroids = np.array([np.mean(x, axis=0) for x in clusters]).reshape(centroids.shape)
+
+            # Check for convergence
+            # Same method used in the already implemented method for comparison purpose
+            converged = np.allclose((prev_centroids-centroids), np.zeros(centroids.shape), atol=1e-6, rtol=0)
+            if converged :
+                print(i, "iterations")
+                break
 
         # Store the info
         self.centroids = centroids
